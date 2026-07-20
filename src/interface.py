@@ -90,7 +90,7 @@ class DexPilotUI(QWidget):
             button.setMinimumHeight(45)
             button.setStyleSheet("""
                 QPushButton{
-                    background:#4CAF50;
+                    background:#6BE6C5;
                     color:white;
                     border:none;
                     border-radius:8px;
@@ -240,7 +240,7 @@ class DexPilotUI(QWidget):
             QLabel {
                 background-color: #1f1f1f;
                 color: white;
-                border: 2px solid #4CAF50;
+                border: 2px solid #6BE6C5;
                 border-radius: 12px;
                 font-size: 20px;
             }
