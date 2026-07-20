@@ -299,14 +299,28 @@ class DexPilotUI(QWidget):
     def start_recognition(self):
         if self.running:
             return
-        self.cap = cv2.VideoCapture(0)
+        
+        # Запускаем камеру с принудительным использованием бэкенда V4L2 для Linux
+        self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+        
         if not self.cap.isOpened():
             self.camera_status.setText("Камера: ошибка")
             return
-        self._update_analysis_ui()
+            
+        # Задаем MJPEG сжатие кадров, чтобы поток не зависал в usbipd мосту
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        
+        # Ограничиваем разрешение до 640x480 для снижения нагрузки
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        
+        # Даем аппаратной камере 1 секунду на прогрев и инициализацию матриц
+        time.sleep(1.0)
+
+        self._reset_analysis()  # Сбрасываем старые графики перед новым запуском
         self.running = True
         self.camera_status.setText("Камера: включена")
-        self.timer.start(33)
+        self.timer.start(40)  # Ставим интервал 40мс (~25 FPS) для стабильности
 
     def stop_recognition(self):
         self.running = False
