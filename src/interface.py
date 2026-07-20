@@ -90,7 +90,7 @@ class DexPilotUI(QWidget):
             button.setMinimumHeight(45)
             button.setStyleSheet("""
                 QPushButton{
-                    background:#6BE6C5;
+                    background:#359f82;
                     color:white;
                     border:none;
                     border-radius:8px;
@@ -99,11 +99,11 @@ class DexPilotUI(QWidget):
                 }
 
                 QPushButton:hover{
-                    background:#45a049;
+                    background:#87359f;
                 }
 
                 QPushButton:pressed{
-                    background:#2d7d32;
+                    background:#87359f;
                 }
             """)
             group_layout.addWidget(button)
