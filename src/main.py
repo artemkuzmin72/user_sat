@@ -8,9 +8,9 @@ from PIL import Image
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-FACE_MODEL_PATH = "/Users/artemkuzmin/VSCProjects/python/user_sat/face_landmarker.task"
-EMOTION_MODEL_PATH = "/Users/artemkuzmin/VSCProjects/python/user_sat/models/emotion_model.pth"
-CLASSES_PATH = "/Users/artemkuzmin/VSCProjects/python/user_sat/models/classes.json"
+FACE_MODEL_PATH = "face_landmarker.task"
+EMOTION_MODEL_PATH = "models/emotion_model.pth"
+CLASSES_PATH = "models/classes.json"
 
 if torch.backends.mps.is_available():
     device = torch.device("mps")
