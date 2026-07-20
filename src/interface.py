@@ -22,7 +22,7 @@ from main import (
     draw_mesh,
     crop_face,
     predict_emotion,
-    get_emotion_delta,
+    compute_frame_analysis,
 )
 
 
@@ -39,7 +39,8 @@ class DexPilotUI(QWidget):
         self.satisfaction = 50.0
         self.positive_total = 0.0
         self.negative_total = 0.0
-        self.last_emotion = None
+        self.satisfaction_sum = 0.0
+        self.sample_count = 0
         self.last_analysis_time = 0.0
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
@@ -62,15 +63,7 @@ class DexPilotUI(QWidget):
         self.video_label = QLabel("Нажмите «Запустить распознавание»")
         self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_label.setMinimumSize(800, 600)
-        self.video_label.setStyleSheet("""
-            QLabel{
-                background-color:#6BE6C5;
-                color:white;
-                border:2px solid #7AE79F;
-                border-radius:12px;
-                font-size:20px;
-            }
-        """)
+        self._set_video_placeholder_style()
 
         left_layout.addWidget(title)
         left_layout.addWidget(self.video_label)
@@ -97,7 +90,7 @@ class DexPilotUI(QWidget):
             button.setMinimumHeight(45)
             button.setStyleSheet("""
                 QPushButton{
-                    background:#7536D2;
+                    background:#4CAF50;
                     color:white;
                     border:none;
                     border-radius:8px;
@@ -159,7 +152,7 @@ class DexPilotUI(QWidget):
             "Негатив", "#f44336"
         )
         self.satisfaction_bar, self.satisfaction_column_value = self._create_column(
-            "Итог", "#B121F3"
+            "Итог", "#2196F3"
         )
 
         columns_layout.addStretch()
@@ -242,23 +235,39 @@ class DexPilotUI(QWidget):
 
         return layout, (bar, value_label)
 
+    def _set_video_placeholder_style(self):
+        self.video_label.setStyleSheet("""
+            QLabel {
+                background-color: #1f1f1f;
+                color: white;
+                border: 2px solid #4CAF50;
+                border-radius: 12px;
+                font-size: 20px;
+            }
+        """)
+
+    def _satisfaction_color(self, satisfaction):
+        if satisfaction < 40:
+            return "#f44336"
+        if satisfaction < 60:
+            return "#FFC107"
+        return "#4CAF50"
+
     def _reset_analysis(self):
         self.satisfaction = 50.0
         self.positive_total = 0.0
         self.negative_total = 0.0
-        self.last_emotion = None
+        self.satisfaction_sum = 0.0
+        self.sample_count = 0
         self.last_analysis_time = 0.0
+        self._set_video_placeholder_style()
         self._update_analysis_ui()
 
-    def _update_analysis_ui(self):
+    def _update_analysis_ui(self, final=False):
         satisfaction = int(round(self.satisfaction))
-        self.satisfaction_label.setText(f"Удовлетворённость: {satisfaction}%")
-
-        color = "#4CAF50"
-        if satisfaction < 40:
-            color = "#f44336"
-        elif satisfaction < 60:
-            color = "#FFC107"
+        prefix = "Результат" if final else "Удовлетворённость"
+        color = self._satisfaction_color(satisfaction)
+        self.satisfaction_label.setText(f"{prefix}: {satisfaction}%")
         self.satisfaction_label.setStyleSheet(
             f"font-size:16px; font-weight:bold; color:{color};"
         )
@@ -267,60 +276,92 @@ class DexPilotUI(QWidget):
         neg_bar, neg_val = self.negative_value
         sat_bar, sat_val = self.satisfaction_column_value
 
-        pos_bar.setValue(min(int(self.positive_total), 100))
-        neg_bar.setValue(min(int(self.negative_total), 100))
+        avg_positive = self.positive_total / self.sample_count if self.sample_count else 0
+        avg_negative = self.negative_total / self.sample_count if self.sample_count else 0
+
+        pos_bar.setValue(min(int(round(avg_positive)), 100))
+        neg_bar.setValue(min(int(round(avg_negative)), 100))
         sat_bar.setValue(satisfaction)
 
-        pos_val.setText(f"+{self.positive_total:.0f}")
-        neg_val.setText(f"-{self.negative_total:.0f}")
-        sat_val.setText(str(satisfaction))
+        pos_val.setText(f"{avg_positive:.0f}%")
+        neg_val.setText(f"{avg_negative:.0f}%")
+        sat_val.setText(f"{satisfaction}%")
 
-    def _apply_emotion_to_analysis(self, emotion, confidence):
+    def _apply_emotion_to_analysis(self, probs):
         now = time.time()
-        if emotion == self.last_emotion and now - self.last_analysis_time < 1.0:
+        if now - self.last_analysis_time < 0.25:
             return
 
-        delta = get_emotion_delta(emotion, confidence)
-        if delta == 0:
-            self.last_emotion = emotion
-            self.last_analysis_time = now
-            return
-
-        self.satisfaction = max(0, min(100, self.satisfaction + delta))
-        if delta > 0:
-            self.positive_total += delta
-        else:
-            self.negative_total += abs(delta)
-
-        self.last_emotion = emotion
+        frame_satisfaction, positive, negative = compute_frame_analysis(probs)
+        self.satisfaction_sum += frame_satisfaction
+        self.positive_total += positive
+        self.negative_total += negative
+        self.sample_count += 1
+        self.satisfaction = self.satisfaction_sum / self.sample_count
         self.last_analysis_time = now
         self._update_analysis_ui()
+
+    def _show_center_result(self):
+        satisfaction = int(round(self.satisfaction))
+        color = self._satisfaction_color(satisfaction)
+
+        if self.sample_count == 0:
+            text = "Результат\n\nНет данных"
+            color = "#9e9e9e"
+        else:
+            text = f"Результат\n\n{satisfaction}%"
+
+        self.video_label.setPixmap(QPixmap())
+        self.video_label.setText(text)
+        self.video_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: #1f1f1f;
+                color: {color};
+                border: 3px solid {color};
+                border-radius: 12px;
+                font-size: 56px;
+                font-weight: bold;
+                padding: 40px;
+            }}
+        """)
 
     def start_recognition(self):
         if self.running:
             return
         
-        # Запускаем камеру с принудительным использованием бэкенда V4L2 для Linux
+        # Шаг 1: Пробуем запуститься в режиме для WSL 2 (сжатие, V4L2)
+        print("Попытка запуска камеры в режиме WSL 2...")
         self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
         
+        if self.cap.isOpened():
+            # Настраиваем кодек и разрешение для WSL
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            time.sleep(1.0)
+            
+            # Проверяем, отдаёт ли камера кадры (боремся с select() timeout)
+            ret, _ = self.cap.read()
+            if not ret:
+                print("Режим WSL 2 не отдал кадры. Откатываемся к стандартному режиму...")
+                self.cap.release()
+                self.cap = cv2.VideoCapture(0)  # Дефолтный запуск
+        else:
+            # Шаг 2: Если CAP_V4L2 вообще не поддерживается (например, на обычной Windows)
+            print("Режим WSL 2 недоступен. Запуск в стандартном режиме...")
+            self.cap = cv2.VideoCapture(0)
+
+        # Финальная проверка: открылась ли камера хотя бы в одном из режимов
         if not self.cap.isOpened():
             self.camera_status.setText("Камера: ошибка")
+            print("Ошибка: Не удалось открыть камеру ни в одном из режимов.")
             return
-            
-        # Задаем MJPEG сжатие кадров, чтобы поток не зависал в usbipd мосту
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-        
-        # Ограничиваем разрешение до 640x480 для снижения нагрузки
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        
-        # Даем аппаратной камере 1 секунду на прогрев и инициализацию матриц
-        time.sleep(1.0)
 
-        self._reset_analysis()  # Сбрасываем старые графики перед новым запуском
+        self._reset_analysis()
         self.running = True
         self.camera_status.setText("Камера: включена")
-        self.timer.start(40)  # Ставим интервал 40мс (~25 FPS) для стабильности
+        self.timer.start(40)
+        print("Камера успешно запущена!")
 
     def stop_recognition(self):
         self.running = False
@@ -331,9 +372,8 @@ class DexPilotUI(QWidget):
         self.camera_status.setText("Камера: выключена")
         self.face_status.setText("Лицо: не обнаружено")
         self.emotion_status.setText("Эмоция: ---")
-        self._update_analysis_ui()
-        self.video_label.setText("Нажмите «Запустить распознавание»")
-        self.video_label.setPixmap(QPixmap())
+        self._update_analysis_ui(final=True)
+        self._show_center_result()
 
     def toggle_face_mesh(self):
         self.show_mesh = not self.show_mesh
@@ -364,7 +404,7 @@ class DexPilotUI(QWidget):
                     draw_mesh(frame, landmarks)
                 face = crop_face(frame, landmarks)
                 if face is not None:
-                    emotion, confidence = predict_emotion(face)
+                    emotion, confidence, probs = predict_emotion(face)
                     text = f"{emotion}: {confidence:.1f}%"
                     cv2.putText(
                         frame,
@@ -376,9 +416,9 @@ class DexPilotUI(QWidget):
                         3,
                     )
                     self.emotion_status.setText(
-                        f"Эмоция: {emotion}"
+                        f"Эмоция: {emotion} ({confidence:.1f}%)"
                     )
-                    self._apply_emotion_to_analysis(emotion, confidence)
+                    self._apply_emotion_to_analysis(probs)
 
         self.face_status.setText(
             "Лицо: обнаружено" if face_detected else "Лицо: не обнаружено"

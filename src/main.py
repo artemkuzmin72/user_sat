@@ -8,9 +8,9 @@ from PIL import Image
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-FACE_MODEL_PATH = "face_landmarker.task"
-EMOTION_MODEL_PATH = "models/emotion_model.pth"
-CLASSES_PATH = "models/classes.json"
+FACE_MODEL_PATH = "/Users/artemkuzmin/VSCProjects/python/user_sat/face_landmarker.task"
+EMOTION_MODEL_PATH = "/Users/artemkuzmin/VSCProjects/python/user_sat/models/emotion_model.pth"
+CLASSES_PATH = "/Users/artemkuzmin/VSCProjects/python/user_sat/models/classes.json"
 
 if torch.backends.mps.is_available():
     device = torch.device("mps")
@@ -25,14 +25,26 @@ with open(CLASSES_PATH, "r") as f:
 POSITIVE_EMOTIONS = {"happy", "surprise"}
 NEGATIVE_EMOTIONS = {"angry", "disgust", "fear", "sad"}
 
+EMOTION_VALENCE = {
+    "happy": 1.0,
+    "surprise": 0.5,
+    "neutral": 0.0,
+    "sad": -1.0,
+    "angry": -1.0,
+    "fear": -0.7,
+    "disgust": -0.8,
+}
 
-def get_emotion_delta(emotion, confidence):
-    weight = confidence / 10
-    if emotion in POSITIVE_EMOTIONS:
-        return weight
-    if emotion in NEGATIVE_EMOTIONS:
-        return -weight
-    return 0.0
+
+def compute_frame_analysis(probs):
+    positive = sum(probs.get(emotion, 0.0) for emotion in POSITIVE_EMOTIONS)
+    negative = sum(probs.get(emotion, 0.0) for emotion in NEGATIVE_EMOTIONS)
+    valence = sum(
+        EMOTION_VALENCE.get(emotion, 0.0) * (confidence / 100.0)
+        for emotion, confidence in probs.items()
+    )
+    frame_satisfaction = max(0.0, min(100.0, 50.0 + 50.0 * valence))
+    return frame_satisfaction, positive, negative
 
 model = models.mobilenet_v3_small(weights=None)
 model.classifier[3] = nn.Linear(model.classifier[3].in_features, len(classes))
@@ -107,9 +119,14 @@ def predict_emotion(face):
     image = transform(Image.fromarray(face)).unsqueeze(0).to(device)
     with torch.no_grad():
         output = model(image)
-        probabilities = torch.softmax(output, dim=1)
-        confidence, index = torch.max(probabilities, 1)
-    return classes[index.item()], confidence.item() * 100
+        probabilities = torch.softmax(output, dim=1)[0]
+
+    probs = {
+        classes[i]: probabilities[i].item() * 100.0
+        for i in range(len(classes))
+    }
+    top_emotion = max(probs, key=probs.get)
+    return top_emotion, probs[top_emotion], probs
 
 
 def run():
