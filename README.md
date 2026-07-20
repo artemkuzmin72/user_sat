@@ -5,6 +5,7 @@ OpenCV -> MediaPipe
 
 Technologies:
 - PyTorch
+- PyQt
 - OpenCV
 - MediaPipe
 
