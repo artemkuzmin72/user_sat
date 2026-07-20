@@ -67,7 +67,7 @@ class DexPilotUI(QWidget):
 
         self.start_button = QPushButton("▶ Запустить распознавание")
         self.stop_button = QPushButton("■ Остановить распознавание")
-        self.face_mesh_button = QPushButton("👤 Показать карту лица")
+        self.face_mesh_button = QPushButton("Показать карту лица")
 
         buttons = [
             self.start_button,
