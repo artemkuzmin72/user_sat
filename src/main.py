@@ -22,6 +22,18 @@ else:
 with open(CLASSES_PATH, "r") as f:
     classes = json.load(f)
 
+POSITIVE_EMOTIONS = {"happy", "surprise"}
+NEGATIVE_EMOTIONS = {"angry", "disgust", "fear", "sad"}
+
+
+def get_emotion_delta(emotion, confidence):
+    weight = confidence / 10
+    if emotion in POSITIVE_EMOTIONS:
+        return weight
+    if emotion in NEGATIVE_EMOTIONS:
+        return -weight
+    return 0.0
+
 model = models.mobilenet_v3_small(weights=None)
 model.classifier[3] = nn.Linear(model.classifier[3].in_features, len(classes))
 model.load_state_dict(torch.load(EMOTION_MODEL_PATH, map_location=device))
