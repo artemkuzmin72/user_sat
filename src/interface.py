@@ -400,9 +400,9 @@ class DexPilotUI(QWidget):
         if result.face_landmarks:
             for landmarks in result.face_landmarks:
                 face_detected = True
+                face = crop_face(frame, landmarks)
                 if self.show_mesh:
                     draw_mesh(frame, landmarks)
-                face = crop_face(frame, landmarks)
                 if face is not None:
                     emotion, confidence, probs = predict_emotion(face)
                     text = f"{emotion}: {confidence:.1f}%"

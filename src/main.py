@@ -108,7 +108,7 @@ def crop_face(frame, landmarks):
     y1 = max(min(ys) - 40, 0)
     x2 = min(max(xs) + 40, w)
     y2 = min(max(ys) + 40, h)
-    face = frame[y1:y2, x1:x2]
+    face = frame[y1:y2, x1:x2].copy()
     if face.size == 0:
         return None
     return face
