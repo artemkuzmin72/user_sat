@@ -416,7 +416,7 @@ class DexPilotUI(QWidget):
                         3,
                     )
                     self.emotion_status.setText(
-                        f"Эмоция: {emotion} ({confidence:.1f}%)"
+                        f"Эмоция: {emotion}"
                     )
                     self._apply_emotion_to_analysis(probs)
 
