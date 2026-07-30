@@ -1,23 +1,45 @@
 import json
-import cv2
+import sys
 import torch
 import torch.nn as nn
-import mediapipe as mp
 from torchvision import models, transforms
 from PIL import Image
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
+
+try:
+    import cv2
+except ImportError:  # pragma: no cover
+    cv2 = None
+
+try:
+    import mediapipe as mp
+    from mediapipe.tasks import python
+    from mediapipe.tasks.python import vision
+except ImportError:  # pragma: no cover
+    mp = None
+    python = None
+    vision = None
+
+try:
+    from mouse import MouseTracker
+except Exception:  # pragma: no cover
+    MouseTracker = None
 
 FACE_MODEL_PATH = "face_landmarker.task"
 EMOTION_MODEL_PATH = "models/emotion_model.pth"
 CLASSES_PATH = "models/classes.json"
 
-if torch.backends.mps.is_available():
-    device = torch.device("mps")
-elif torch.cuda.is_available():
-    device = torch.device("cuda")
-else:
-    device = torch.device("cpu")
+try:
+    if hasattr(torch, "backends") and getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif hasattr(torch, "cuda") and torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+except Exception:
+    try:
+        device = torch.device("cpu")
+    except Exception:
+        device = "cpu"
 
 with open(CLASSES_PATH, "r") as f:
     classes = json.load(f)
@@ -46,34 +68,46 @@ def compute_frame_analysis(probs):
     frame_satisfaction = max(0.0, min(100.0, 50.0 + 50.0 * valence))
     return frame_satisfaction, positive, negative
 
-model = models.mobilenet_v3_small(weights=None)
-model.classifier[3] = nn.Linear(model.classifier[3].in_features, len(classes))
-model.load_state_dict(torch.load(EMOTION_MODEL_PATH, map_location=device))
-model.to(device)
-model.eval()
+model = None
+transform = None
+face_landmarker = None
+TESSELATION = []
+CONTOURS = []
 
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize(
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225],
-    ),
-])
+if cv2 is not None and mp is not None and python is not None and vision is not None:
+    try:
+        model = models.mobilenet_v3_small(weights=None)
+    except Exception:
+        model = None
 
-base_options = python.BaseOptions(model_asset_path=FACE_MODEL_PATH)
-options = vision.FaceLandmarkerOptions(
-    base_options=base_options,
-    running_mode=vision.RunningMode.VIDEO,
-    num_faces=1,
-    min_face_detection_confidence=0.5,
-    min_face_presence_confidence=0.5,
-    min_tracking_confidence=0.5,
-)
-face_landmarker = vision.FaceLandmarker.create_from_options(options)
+    if model is not None:
+        model.classifier[3] = nn.Linear(model.classifier[3].in_features, len(classes))
+        model.load_state_dict(torch.load(EMOTION_MODEL_PATH, map_location=device))
+        model.to(device)
+        model.eval()
 
-TESSELATION = vision.FaceLandmarksConnections.FACE_LANDMARKS_TESSELATION
-CONTOURS = vision.FaceLandmarksConnections.FACE_LANDMARKS_CONTOURS
+        transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
+            ),
+        ])
+
+        base_options = python.BaseOptions(model_asset_path=FACE_MODEL_PATH)
+        options = vision.FaceLandmarkerOptions(
+            base_options=base_options,
+            running_mode=vision.RunningMode.VIDEO,
+            num_faces=1,
+            min_face_detection_confidence=0.5,
+            min_face_presence_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
+        face_landmarker = vision.FaceLandmarker.create_from_options(options)
+
+        TESSELATION = vision.FaceLandmarksConnections.FACE_LANDMARKS_TESSELATION
+        CONTOURS = vision.FaceLandmarksConnections.FACE_LANDMARKS_CONTOURS
 
 
 def draw_mesh(frame, landmarks):
