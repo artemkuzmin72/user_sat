@@ -14,8 +14,8 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QProgressBar,
 )
-from PyQt6.QtGui import QFont, QImage, QPixmap
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont, QImage, QPixmap, QCloseEvent
+from PyQt6.QtCore import Qt, QTimer, QCoreApplication
 
 from main import (
     face_landmarker,
@@ -24,6 +24,8 @@ from main import (
     predict_emotion,
     compute_frame_analysis,
 )
+
+from mouse import MouseTracker
 
 
 class DexPilotUI(QWidget):
@@ -45,11 +47,18 @@ class DexPilotUI(QWidget):
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
 
+        self.mouse_tracker = None
+        self.mouse_tracking_active = False
+        self._is_closing = False
+        self._is_stopping_mouse = False
+
         self.init_ui()
         self._update_analysis_ui()
+        
         self.start_button.clicked.connect(self.start_recognition)
         self.stop_button.clicked.connect(self.stop_recognition)
         self.face_mesh_button.clicked.connect(self.toggle_face_mesh)
+        self.mouse_tracker_button.clicked.connect(self.toggle_mouse_tracking)
 
     def init_ui(self):
         main_layout = QHBoxLayout(self)
@@ -85,8 +94,9 @@ class DexPilotUI(QWidget):
         self.start_button = QPushButton("▶ Запустить распознавание")
         self.stop_button = QPushButton("■ Остановить распознавание")
         self.face_mesh_button = QPushButton("Скрыть карту лица")
+        self.mouse_tracker_button = QPushButton("Запустить трекинг мыши")
 
-        for button in [self.start_button, self.stop_button, self.face_mesh_button]:
+        for button in [self.start_button, self.stop_button, self.face_mesh_button, self.mouse_tracker_button]:
             button.setMinimumHeight(45)
             button.setStyleSheet("""
                 QPushButton{
@@ -117,12 +127,14 @@ class DexPilotUI(QWidget):
         self.face_status = QLabel("Лицо: не обнаружено")
         self.emotion_status = QLabel("Эмоция: ---")
         self.id_status = QLabel("ID пользователя: ---")
+        self.mouse_status = QLabel("Трекинг мыши: выключен")
 
         for lbl in [
             self.camera_status,
             self.face_status,
             self.emotion_status,
             self.id_status,
+            self.mouse_status,
         ]:
             lbl.setStyleSheet("font-size:14px;")
 
@@ -130,6 +142,7 @@ class DexPilotUI(QWidget):
         info_layout.addWidget(self.face_status)
         info_layout.addWidget(self.emotion_status)
         info_layout.addWidget(self.id_status)
+        info_layout.addWidget(self.mouse_status)
 
         info_group.setLayout(info_layout)
 
@@ -329,32 +342,40 @@ class DexPilotUI(QWidget):
         if self.running:
             return
         
-        # Шаг 1: Пробуем запуститься в режиме для WSL 2 (сжатие, V4L2)
-        print("Попытка запуска камеры в режиме WSL 2...")
-        self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+        print("Попытка запуска камеры...")
         
-        if self.cap.isOpened():
-            # Настраиваем кодек и разрешение для WSL
-            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            time.sleep(1.0)
-            
-            # Проверяем, отдаёт ли камера кадры (боремся с select() timeout)
-            ret, _ = self.cap.read()
-            if not ret:
-                print("Режим WSL 2 не отдал кадры. Откатываемся к стандартному режиму...")
-                self.cap.release()
-                self.cap = cv2.VideoCapture(0)  # Дефолтный запуск
-        else:
-            # Шаг 2: Если CAP_V4L2 вообще не поддерживается (например, на обычной Windows)
-            print("Режим WSL 2 недоступен. Запуск в стандартном режиме...")
-            self.cap = cv2.VideoCapture(0)
-
-        # Финальная проверка: открылась ли камера хотя бы в одном из режимов
-        if not self.cap.isOpened():
+        backends = [
+            cv2.CAP_V4L2,
+            cv2.CAP_DSHOW,
+            cv2.CAP_ANY
+        ]
+        
+        self.cap = None
+        
+        for backend in backends:
+            try:
+                print(f"Пробуем backend: {backend}")
+                for idx in [0, 1]:
+                    cap = cv2.VideoCapture(idx, backend)
+                    if cap.isOpened():
+                        ret, frame = cap.read()
+                        if ret and frame is not None:
+                            self.cap = cap
+                            print(f"Камера открыта: backend {backend}, index {idx}")
+                            break
+                        else:
+                            cap.release()
+                    else:
+                        cap.release()
+                if self.cap:
+                    break
+            except Exception as e:
+                print(f"Ошибка с backend {backend}: {e}")
+                continue
+        
+        if not self.cap:
             self.camera_status.setText("Камера: ошибка")
-            print("Ошибка: Не удалось открыть камеру ни в одном из режимов.")
+            print("Ошибка: Не удалось открыть камеру.")
             return
 
         self._reset_analysis()
@@ -365,21 +386,107 @@ class DexPilotUI(QWidget):
 
     def stop_recognition(self):
         self.running = False
-        self.timer.stop()
+        if self.timer.isActive():
+            self.timer.stop()
+        
         if self.cap is not None:
             self.cap.release()
             self.cap = None
+            
         self.camera_status.setText("Камера: выключена")
         self.face_status.setText("Лицо: не обнаружено")
         self.emotion_status.setText("Эмоция: ---")
         self._update_analysis_ui(final=True)
         self._show_center_result()
+        print("Распознавание остановлено")
 
     def toggle_face_mesh(self):
         self.show_mesh = not self.show_mesh
         self.face_mesh_button.setText(
             "Скрыть карту лица" if self.show_mesh else "Показать карту лица"
         )
+
+    def toggle_mouse_tracking(self):
+        """Включение/выключение трекинга мыши (асинхронно)"""
+        if self._is_stopping_mouse:
+            return
+            
+        if self.mouse_tracking_active:
+            self._is_stopping_mouse = True
+            self.mouse_tracker_button.setEnabled(False)
+            self.mouse_tracker_button.setText("⏳ Остановка...")
+            self.mouse_status.setText("Трекинг мыши: остановка...")
+            
+            QTimer.singleShot(100, self._stop_mouse_tracking_async)
+        else:
+            self.mouse_tracker = MouseTracker()
+            self.mouse_tracker.status_updated.connect(self.update_mouse_status)
+            self.mouse_tracker.data_collected.connect(self.update_mouse_stats)
+            self.mouse_tracker.finished.connect(self._on_mouse_tracker_finished)
+            self.mouse_tracker.start()
+            self.mouse_tracking_active = True
+            self.mouse_tracker_button.setText("Остановить трекинг мыши")
+            self.mouse_status.setText("Трекинг мыши: активен")
+            self.mouse_status.setStyleSheet("font-size:14px; color:#4CAF50;")
+
+    def _stop_mouse_tracking_async(self):
+        """Асинхронная остановка трекинга мыши"""
+        try:
+            if self.mouse_tracker and self.mouse_tracker.isRunning():
+                try:
+                    self.mouse_tracker.status_updated.disconnect()
+                    self.mouse_tracker.data_collected.disconnect()
+                    self.mouse_tracker.finished.disconnect()
+                except:
+                    pass
+                
+                self.mouse_tracker.stop_tracking()
+                self.mouse_tracker.finished.connect(self._on_mouse_tracker_stopped)
+                
+        except Exception as e:
+            print(f"Ошибка при остановке трекера: {e}")
+            self._reset_mouse_ui()
+
+    def _on_mouse_tracker_stopped(self):
+        """Колбэк когда трекер мыши остановлен"""
+        self._reset_mouse_ui()
+
+    def _on_mouse_tracker_finished(self):
+        """Колбэк когда трекер мыши завершил работу"""
+        if not self.mouse_tracking_active:
+            self._reset_mouse_ui()
+
+    def _reset_mouse_ui(self):
+        """Сброс UI трекера мыши"""
+        self.mouse_tracking_active = False
+        self._is_stopping_mouse = False
+        self.mouse_tracker_button.setEnabled(True)
+        self.mouse_tracker_button.setText("🖱 Запустить трекинг мыши")
+        self.mouse_status.setText("Трекинг мыши: выключен")
+        self.mouse_status.setStyleSheet("font-size:14px; color:#f44336;")
+        
+        if self.mouse_tracker:
+            try:
+                self.mouse_tracker.status_updated.disconnect()
+                self.mouse_tracker.data_collected.disconnect()
+                self.mouse_tracker.finished.disconnect()
+            except:
+                pass
+            self.mouse_tracker = None
+
+    def update_mouse_status(self, message):
+        """Обновление статуса трекинга мыши"""
+        if not self._is_stopping_mouse:
+            self.mouse_status.setText(f"Трекинг мыши: {message}")
+            if "остановлен" in message.lower() or "выключен" in message.lower():
+                self._reset_mouse_ui()
+
+    def update_mouse_stats(self, positions, clicks):
+        """Обновление статистики трекинга мыши"""
+        if not self._is_stopping_mouse:
+            self.mouse_status.setText(
+                f"Трекинг мыши: {positions} позиций, {clicks} кликов"
+            )
 
     def update_frame(self):
         if not self.running or self.cap is None:
@@ -415,9 +522,7 @@ class DexPilotUI(QWidget):
                         (0, 255, 0),
                         3,
                     )
-                    self.emotion_status.setText(
-                        f"Эмоция: {emotion}"
-                    )
+                    self.emotion_status.setText(f"Эмоция: {emotion}")
                     self._apply_emotion_to_analysis(probs)
 
         self.face_status.setText(
@@ -442,6 +547,61 @@ class DexPilotUI(QWidget):
         )
         self.video_label.setPixmap(pixmap)
 
-    def closeEvent(self, event):
-        self.stop_recognition()
+    def closeEvent(self, event: QCloseEvent):
+        """Обработка закрытия окна"""
+        if self._is_closing:
+            event.accept()
+            return
+            
+        self._is_closing = True
+        print("Закрытие приложения...")
+        
+        self.setEnabled(False)
+        
+        if self.timer.isActive():
+            self.timer.stop()
+        
+        self.running = False
+        
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
+        
+        if self.mouse_tracker is not None and self.mouse_tracker.isRunning():
+            print("Остановка трекинга мыши...")
+            self.mouse_tracker.stop_tracking()
+            if not self.mouse_tracker.wait(2000):
+                print("Таймаут остановки трекера, принудительное завершение")
+                self.mouse_tracker.terminate()
+                self.mouse_tracker.wait(1000)
+            self.mouse_tracker = None
+        
+        try:
+            import matplotlib.pyplot as plt
+            plt.close('all')
+        except:
+            pass
+        
+        print("Приложение закрыто")
+        self.setEnabled(True)
         event.accept()
+
+
+def run_app():
+    """Запуск приложения"""
+    app = QApplication(sys.argv)
+    window = DexPilotUI()
+    window.show()
+    
+    def signal_handler(signum, frame):
+        print("Получен сигнал завершения")
+        QCoreApplication.quit()
+    
+    import signal
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    run_app()
