@@ -9,6 +9,7 @@
 - Классификация 7 эмоций: `angry`, `disgust`, `fear`, `happy`, `neutral`, `sad`, `surprise`
 - Отображение текущей эмоции и уверенности модели на видеопотоке
 - Накопительный анализ сессии: позитив, негатив, итоговая удовлетворённость
+- Построение тепловой карты движения курсора
 - Поддержка GPU: Apple MPS, CUDA или CPU
 
 ## Архитектура
@@ -16,13 +17,15 @@
 ```
 Веб-камера (OpenCV)
         ↓
-   Кадр BGR → flip → RGB
+Кадр BGR → flip → RGB
         ↓
 MediaPipe Face Landmarker  →  landmarks
         ↓
 crop_face (копия ROI)  →  MobileNetV3-Small  →  softmax → эмоция
         ↓
 draw_mesh / UI overlay (только для отображения)
+        ↓
+pyinput (отслеживание курсора)
         ↓
 PyQt6 интерфейс
 ```
